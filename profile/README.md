@@ -46,7 +46,7 @@ Key Files:
 - `source.coop/cli/src/index.ts`: Entry point for the command-line interface.
 
 ## Usage Instructions
-For Usage instrcutions on below sectins, please refer to correspoding readme file on source.coop and daat.source.coop.
+For Usage instrcutions on below sections, please refer to correspoding readme file on source.coop and data.source.coop.
 
 ### Installation
 ### Running the Application
