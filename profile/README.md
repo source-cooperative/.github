@@ -74,11 +74,11 @@ User -> Web App -> API Routes -> DynamoDB
 The project uses the following AWS resources:
 
 - DynamoDB:
-  - sc-accounts: Stores user and organization account information
-  - sc-repositories: Stores repository metadata
-  - sc-api-keys: Stores API keys for authentication
-  - sc-memberships: Stores membership information for accounts and repositories
-  - sc-data-connections: Stores data connection configurations
+  - accounts: Stores user and organization account information
+  - repositories: Stores repository metadata
+  - api-keys: Stores API keys for authentication
+  - memberships: Stores membership information for accounts and repositories
+  - data-connections: Stores data connection configurations
 
 - S3:
   - source-cooperative: Main bucket for storing repository data
