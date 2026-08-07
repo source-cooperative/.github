@@ -1,0 +1,147 @@
+# Reusable Cloudflare preview deployment: builds a static site and publishes it
+# as a per-PR Worker, then deletes that Worker when the PR closes.
+#
+# Call from any repo (see the README for the full caller). The caller's trigger
+# MUST include `closed`, or previews are never torn down:
+#
+#   on:
+#     pull_request:
+#       types: [opened, synchronize, reopened, closed]
+#
+#   jobs:
+#     preview:
+#       uses: source-cooperative/.github/.github/workflows/cloudflare-preview.yml@main
+#       permissions:
+#         contents: read
+#         pull-requests: write
+#       secrets:
+#         CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+#         CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+#
+# No Cloudflare setup is needed per repo: `wrangler deploy` creates the Worker
+# on first run. The account needs a registered workers.dev subdomain and an API
+# token with Workers Scripts: Edit (which also covers the delete on teardown).
+name: Cloudflare Preview
+
+on:
+  workflow_call:
+    inputs:
+      output_dir:
+        description: Directory the build writes static assets to.
+        type: string
+        default: dist
+      build_command:
+        description: Build command. Empty runs `<package manager> run build`.
+        type: string
+        default: ""
+      node_version:
+        description: Node version to build with.
+        type: string
+        default: "22"
+      compatibility_date:
+        description: Workers runtime compatibility date for the preview Worker.
+        type: string
+        default: "2026-08-01"
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        description: "Needs Workers Scripts: Edit — covers both deploy and delete."
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
+
+# Worker names allow only lowercase alphanumerics and hyphens, so repo names
+# containing dots (data.source.coop) are sanitized where this is used.
+env:
+  WORKER: ${{ github.event.repository.name }}-pr-${{ github.event.pull_request.number }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+jobs:
+  deploy:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    # Only the deploy is cancellable — a superseded build is wasted work. The
+    # cleanup job deliberately has no concurrency group so a teardown is never
+    # cancelled by a later run.
+    concurrency:
+      group: preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+
+      # Pick the package manager from the lockfile so callers don't have to
+      # declare it — this org has both pnpm (Vite apps) and npm (SvelteKit).
+      - id: pm
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            echo "manager=pnpm" >> "$GITHUB_OUTPUT"
+            echo "install=pnpm install --frozen-lockfile" >> "$GITHUB_OUTPUT"
+          elif [ -f package-lock.json ]; then
+            echo "manager=npm" >> "$GITHUB_OUTPUT"
+            echo "install=npm ci" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::no pnpm-lock.yaml or package-lock.json found"
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+        if: steps.pm.outputs.manager == 'pnpm'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: ${{ steps.pm.outputs.manager }}
+
+      - run: ${{ steps.pm.outputs.install }}
+
+      # BASE_PATH is deliberately left unset: previews are served from the root
+      # of a workers.dev hostname, not a GitHub Pages repo subpath.
+      - run: ${{ inputs.build_command || format('{0} run build', steps.pm.outputs.manager) }}
+
+      - id: deploy
+        run: |
+          set -o pipefail
+          name="${WORKER//./-}"
+          # Explicit --name/--assets/--compatibility-date rather than the bare
+          # `wrangler deploy <dir>` form: that one only works interactively and
+          # is documented as unsupported in CI. Being explicit also stops
+          # wrangler's auto-config from generating a wrangler.jsonc mid-run.
+          npx wrangler@4 deploy \
+            --name "$name" \
+            --assets "./${{ inputs.output_dir }}" \
+            --compatibility-date "${{ inputs.compatibility_date }}" \
+            2>&1 | tee "$RUNNER_TEMP/deploy.log"
+          # Read the URL back from what wrangler actually published instead of
+          # rebuilding it from a subdomain we would have to hardcode.
+          url=$(grep -oE 'https://[A-Za-z0-9._-]+\.workers\.dev' "$RUNNER_TEMP/deploy.log" | head -1)
+          if [ -z "$url" ]; then
+            echo "::error::could not determine deploy URL from wrangler output"
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - uses: peter-evans/find-comment@v4
+        id: find-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: Preview deployed to
+
+      - uses: peter-evans/create-or-update-comment@v5
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            🚀 Preview deployed to ${{ steps.deploy.outputs.url }}
+
+            * Commit: ${{ github.sha }}
+            * Worker: `${{ env.WORKER }}` — deleted automatically when this PR closes.
+
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      # Succeeds even if the Worker was never created (PR closed before a
+      # preview ever deployed), so closing a PR can't fail the check.
+      - run: npx wrangler@4 delete --name "${WORKER//./-}" --force || true
