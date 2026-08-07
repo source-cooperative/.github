@@ -51,10 +51,14 @@ on:
 
 # Worker names allow only lowercase alphanumerics and hyphens, so repo names
 # containing dots (data.source.coop) are sanitized where this is used.
+#
+# The Cloudflare credentials are deliberately NOT set here. A workflow-level
+# env block puts them in the environment of every step, including `install`
+# and `build` — so any postinstall script or transitive dependency in the tree
+# could read a token that can edit and delete every Worker in the account.
+# They are scoped to the two wrangler steps that actually need them.
 env:
   WORKER: ${{ github.event.repository.name }}-pr-${{ github.event.pull_request.number }}
-  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
 jobs:
   deploy:
@@ -99,6 +103,9 @@ jobs:
       - run: ${{ inputs.build_command || format('{0} run build', steps.pm.outputs.manager) }}
 
       - id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -o pipefail
           name="${WORKER//./-}"
@@ -144,4 +151,7 @@ jobs:
     steps:
       # Succeeds even if the Worker was never created (PR closed before a
       # preview ever deployed), so closing a PR can't fail the check.
-      - run: npx wrangler@4 delete --name "${WORKER//./-}" --force || true
+      - env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler@4 delete --name "${WORKER//./-}" --force || true

@@ -161,6 +161,29 @@ Account-level, once:
    deploy and the delete on teardown.
 3. `CLOUDFLARE_ACCOUNT_ID`.
 
-Both belong at the org level so every repo can map them. Note that per-PR
-Workers count against the account's Worker limit; teardown is what keeps that
-bounded.
+Note that per-PR Workers count against the account's Worker limit; teardown is
+what keeps that bounded.
+
+### Blast radius
+
+Think before making these org secrets visible to every repository.
+Cloudflare API token permissions are granted at the **account** level —
+`Workers Scripts: Edit` applies to every Worker in the account, and there is no
+per-script or name-prefix scoping. The same token that creates
+`zarr-viewer-pr-77` can delete a production Worker.
+
+Reduce it, in rough order of value:
+
+1. **Use a separate Cloudflare account for previews.** The only real fix, since
+   the token cannot be scoped below account level. Production Workers then live
+   somewhere CI cannot reach at all.
+2. **Scope the org secret to selected repositories** rather than all — only the
+   repos that actually deploy previews.
+3. **Never put the credentials in a workflow- or job-level `env:` block.** That
+   exposes them to `install` and `build`, where any postinstall script or
+   transitive dependency can read them. This workflow sets them on the two
+   wrangler steps only.
+
+GitHub does not pass secrets to `pull_request` runs from forks, so an outside
+contributor's PR cannot read them. The exposure is to anyone with write access
+to a repo that can see the secret, and to that repo's dependency tree.
