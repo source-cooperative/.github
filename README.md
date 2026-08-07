@@ -1,23 +1,26 @@
 # .github
 
-Org-wide defaults and shared GitHub Actions workflows for Source Cooperative.
+Org-wide defaults and [reusable workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
+for Source Cooperative.
 
-## Reusable workflow: Claude PR review
+## Claude PR Review
 
-`.github/workflows/claude-pr-review.yml` runs the Claude review on a pull
-request and posts it as a single sticky comment that updates in place on every
-push. Repos call it instead of keeping their own copy, so a change to the
-prompt or the action version lands everywhere at once.
+[`claude-pr-review.yml`](.github/workflows/claude-pr-review.yml) has Claude
+review every pull request for correctness and security issues, plus an
+over-engineering pass via the [ponytail](https://github.com/DietrichGebert/ponytail)
+review skill. Findings land in one sticky PR comment that updates in place on
+every push.
 
-Add this as `.github/workflows/claude-review.yml` in the calling repo:
+Add it to a repo by picking the "Claude PR Review" starter workflow under
+**Actions → New workflow**, or by copying this in:
 
 ```yaml
+# .github/workflows/claude-review.yml
 name: Claude Auto Review
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    # The action can't validate or run against modified workflow files and
-    # fails with "401 Unauthorized - Workflow validation failed".
     paths-ignore:
       - '.github/workflows/**'
 
@@ -28,24 +31,60 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
-    secrets: inherit
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
 That is the whole caller. Three things have to stay in it and cannot move into
 the shared workflow:
 
-- **`on:`** — GitHub requires the trigger to live in the calling repo.
+- **`on:`** — GitHub requires the trigger to live in the calling repo. The
+  `paths-ignore` guard matters: the action can't validate or run against
+  modified workflow files and fails with "401 Unauthorized - Workflow
+  validation failed".
 - **`permissions:`** — a called workflow can only maintain or reduce the
-  caller's token permissions, never elevate them. Granting them in the shared
-  workflow would be a no-op wherever the repo's default token is read-only.
-- **`secrets: inherit`** — passes `CLAUDE_CODE_OAUTH_TOKEN` through. The
-  shared workflow declares it `required`, so a caller that omits this fails
-  immediately with a clear message rather than a vague auth error.
+  caller's token permissions, never elevate them. Granting them only in the
+  shared workflow would be a no-op wherever the repo's default token is
+  read-only.
+- **`secrets:`** — mapped explicitly rather than `secrets: inherit`, so the
+  review job receives only this token instead of every secret the repo holds.
 
-`CLAUDE_CODE_OAUTH_TOKEN` must be available to the calling repo, either as an
-org secret or a repo secret.
+### Inputs
+
+All optional, passed under `with:`:
+
+- `ponytail` (default `true`) — set `false` to drop the over-engineering pass.
+- `plugins` / `plugin_marketplaces` — install your own Claude Code plugins
+  (newline-separated `name@marketplace` and marketplace `.git` URLs).
+  Caller-supplied marketplaces install unpinned from their default branch; only
+  the built-in ponytail install is pinned to an exact commit.
+- `extra_instructions` — text appended to the review prompt, e.g. to direct
+  Claude to use a custom plugin's skill.
+- `show_cost` (default `true`) — appends the estimated review cost
+  (API-equivalent), duration, and turn count to the review comment.
+- `model` — model ID for the review (e.g. `claude-opus-4-8`). Empty uses Claude
+  Code's default. With subscription auth, bigger models consume the plan's
+  usage quota faster.
+
+### Creating the `CLAUDE_CODE_OAUTH_TOKEN` secret
+
+1. On a machine with [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+   installed and logged in with a Claude subscription, run `claude setup-token`.
+2. Approve the OAuth flow and copy the long-lived token (starts with
+   `sk-ant-oat01-`).
+3. Save it as an Actions secret named `CLAUDE_CODE_OAUTH_TOKEN` — at the org
+   level (Settings → Secrets and variables → Actions → New organization secret)
+   so every repo can map it, or per-repo. The token bills the subscription of
+   whoever ran `setup-token`, so prefer a service/bot account for the org
+   secret.
 
 ### Pinning
 
 The snippet tracks `@main` so fixes propagate without touching every caller.
 Pin a tag or commit SHA instead if a repo needs the review to be reproducible.
+
+### Upstream
+
+Adapted from [`developmentseed/.github`](https://github.com/developmentseed/.github),
+which runs the same workflow. Keep the diff against upstream small so
+improvements there stay cheap to pull in.
