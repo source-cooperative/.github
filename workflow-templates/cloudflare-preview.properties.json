@@ -1,0 +1,8 @@
+{
+    "name": "Cloudflare Preview",
+    "description": "Builds a static site and publishes it as a per-PR Cloudflare Worker, comments the preview URL on the pull request, and deletes the Worker when the PR closes. Requires the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets.",
+    "categories": [
+        "deployment",
+        "automation"
+    ]
+}

@@ -1,0 +1,28 @@
+name: Cloudflare Preview
+
+on:
+  pull_request:
+    # `closed` is required — it is what triggers the teardown job in the shared
+    # workflow. Without it, preview Workers are never deleted.
+    types: [opened, synchronize, reopened, closed]
+
+jobs:
+  preview:
+    uses: source-cooperative/.github/.github/workflows/cloudflare-preview.yml@main
+    with:
+      # `build` for SvelteKit (adapter-static), `dist` for Vite.
+      output_dir: dist
+      # Other optional inputs:
+      #   build_command: pnpm build   # default: <package manager> run build
+      #   node_version: "22"
+      #   compatibility_date: "2026-08-01"
+    # Granted here because a called workflow can only maintain or reduce the
+    # caller's token permissions, never elevate them.
+    permissions:
+      contents: read
+      pull-requests: write
+    # Mapped explicitly rather than `secrets: inherit` so the job gets only
+    # these two, not every secret this repo holds.
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -88,3 +88,79 @@ Pin a tag or commit SHA instead if a repo needs the review to be reproducible.
 Adapted from [`developmentseed/.github`](https://github.com/developmentseed/.github),
 which runs the same workflow. Keep the diff against upstream small so
 improvements there stay cheap to pull in.
+
+## Cloudflare Preview
+
+[`cloudflare-preview.yml`](.github/workflows/cloudflare-preview.yml) builds a
+static site, publishes it as a per-PR Worker on a `*.workers.dev` URL, comments
+the link on the pull request, and **deletes that Worker when the PR closes**.
+
+Add it by picking the "Cloudflare Preview" starter workflow under **Actions →
+New workflow**, or by copying this in:
+
+```yaml
+# .github/workflows/cloudflare-preview.yml
+name: Cloudflare Preview
+
+on:
+  pull_request:
+    # `closed` is required — it is what triggers teardown. Without it, preview
+    # Workers are never deleted.
+    types: [opened, synchronize, reopened, closed]
+
+jobs:
+  preview:
+    uses: source-cooperative/.github/.github/workflows/cloudflare-preview.yml@main
+    with:
+      output_dir: dist          # `build` for the SvelteKit viewers
+    permissions:
+      contents: read
+      pull-requests: write
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+```
+
+Deploy and teardown live in one workflow deliberately. The per-PR Worker name
+is a contract between them; split across two workflows the convention gets
+defined twice, and when it drifts the failure is silent — teardown deletes a
+name that does not exist, exits clean, and orphaned Workers accumulate.
+
+### Inputs
+
+All optional, passed under `with:`:
+
+- `output_dir` (default `dist`) — directory the build writes static assets to.
+  The SvelteKit viewers use `build`.
+- `build_command` — defaults to `<package manager> run build`. The package
+  manager is detected from the lockfile, so callers with either `pnpm-lock.yaml`
+  or `package-lock.json` need not declare anything.
+- `node_version` (default `22`).
+- `compatibility_date` (default `2026-08-01`) — Workers runtime compatibility
+  date for the preview Worker.
+
+### Base paths
+
+Previews are served from the root of a `workers.dev` hostname, not a repo
+subpath. A site built for GitHub Pages with a hardcoded `base` of `/<repo>/`
+will deploy but load nothing — every asset 404s. Build root-relative for
+previews; if the repo also deploys to Pages, gate the subpath on an env var set
+only by the Pages workflow (see `zarr-viewer`'s `BASE_PATH`).
+
+### Cloudflare setup
+
+**None per repo.** `wrangler deploy` creates the Worker on first run; there is
+nothing to pre-create in the dashboard. That is the advantage over Pages git
+integration, where connecting each repo is an interactive authorization that
+cannot be scripted — and which gives no teardown.
+
+Account-level, once:
+
+1. A registered `workers.dev` subdomain.
+2. `CLOUDFLARE_API_TOKEN` with **Workers Scripts: Edit** — covers both the
+   deploy and the delete on teardown.
+3. `CLOUDFLARE_ACCOUNT_ID`.
+
+Both belong at the org level so every repo can map them. Note that per-PR
+Workers count against the account's Worker limit; teardown is what keeps that
+bounded.
